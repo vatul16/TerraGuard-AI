@@ -124,6 +124,85 @@ def parse_plan_output(stdout: str, stderr: str) -> dict:
     return changes
 
 
+# AI Analysis (Groq)
+def analyze_with_groq(plan_summary: str, changes: dict) -> dict:
+    """
+    Sends drift information to Groq (Llama 3.3) for risk analysis.
+    Returns a structured risk assessment with remediation advice.
+    """
+    print("🤖 Sending to Groq AI for analysis...")
+
+    prompt = f"""You are a Senior Cloud Security Engineer reviewing a Terraform drift report.
+    Drift means someone manually changed AWS infrastructure OUTSIDE of Terraform, which is a security and compliance risk.
+
+    DRIFT DETECTED:
+    Resources Modified: {json.dumps(changes.get("resources_changed", []))}
+    Resources Added: {json.dumps(changes.get("resources_added", []))}
+    Resources Destroyed: {json.dumps(changes.get("resources_destroyed", []))}
+    Attributes Changed: {json.dumps(changes.get("attributes_changed", []))}
+    Plan Summary: {plan_summary}
+
+    Respond ONLY with a valid JSON object (no markdown, no explanation outside JSON):
+    {{
+        "risk_level": "CRITICAL|HIGH|MEDIUM|LOW|INFO",
+        "risk_score": 1-10,
+        "category": "Security|Compliance|Configuration|Cost|Unknown",
+        "summary": "One sentence: what changed and why it matters",
+        "impact": "What could go wrong if this drift is not addressed",
+        "action": "REVERT|ADOPT|INVESTIGATE|MONITOR",
+        "remediation": "Exact command or HCL snippet to fix this (terraform import, terraform apply, etc.)",
+        "reasoning": "Why you assigned this risk level"
+    }}
+
+    Risk Level Guide:
+    - CRITICAL: Security group opened to 0.0.0.0/0, IAM role with * permissions, encryption disabled
+    - HIGH: Public S3 bucket, database made publicly accessible, logging disabled  
+    - MEDIUM: Instance type changed, scaling limits modified, tag removed
+    - LOW: Description updated, non-security tag added
+    - INFO: No meaningful risk (e.g., auto-assigned resource ID changed)"""
+
+    try:
+        response = requests.post(
+            GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,  # Low temp for consistent, factual analysis
+                "max_tokens": 1000,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        content = response.json()["choices"][0]["message"]["content"].strip()
+
+        # Clean up any accidental markdown fences
+        content = re.sub(r"^```(?:json)?\n?", "", content)
+        content = re.sub(r"\n?```$", "", content)
+
+        return json.loads(content)
+
+    except json.JSONDecodeError as e:
+        print(f"⚠️ Could not parse AI response as JSON: {e}")
+        return {
+            "risk_level": "MEDIUM",
+            "risk_score": 5,
+            "category": "Unknown",
+            "summary": "Drift detected but AI analysis failed to parse",
+            "impact": "Unknown — manual review required",
+            "action": "INVESTIGATE",
+            "remediation": "Run: terraform plan -detailed-exitcode",
+            "reasoning": "AI parse error",
+        }
+    except Exception as e:
+        print(f"⚠️ Groq API error: {e}")
+        raise
+
+
 # Main Orchestrator
 def main():
     print("=" * 60)
@@ -149,6 +228,18 @@ def main():
     changes = parse_plan_output(stdout, stderr)
     print(f"   Resources changed: {changes['resources_changed']}")
     print(f"   Attributes changed: {changes['attributes_changed']}")
+
+    # Step 3: AI Analysis via Groq
+    plan_text = stdout[-3000:] if len(stdout) > 3000 else stdout  # Limit content size
+    analysis = analyze_with_groq(plan_text, changes)
+
+    print("\n📊 AI Risk Assessment:")
+    print(f"   Risk Level:  {analysis.get('risk_level')}")
+    print(f"   Risk Score:  {analysis.get('risk_score')}/10")
+    print(f"   Category:    {analysis.get('category')}")
+    print(f"   Summary:     {analysis.get('summary')}")
+    print(f"   Action:      {analysis.get('action')}")
+    print(f"   Remediation: {analysis.get('remediation')}")
 
 
 if __name__ == "__main__":

@@ -1,1 +1,2 @@
 db_password = "strong_db_password"
+bastion_key_name = "key_pair_name"

@@ -33,3 +33,8 @@ variable "app_port" {
   type        = number
   default     = 80
 }
+
+variable "bastion_key_name" {
+  description = "Name of key pair used for Bastion Host"
+  type        = string
+}

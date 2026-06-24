@@ -33,7 +33,7 @@ resource "aws_instance" "bastion" {
   vpc_security_group_ids      = [aws_security_group.bastion.id]
   associate_public_ip_address = true
 
-  key_name = "personal-bastion"
+  key_name = var.bastion_key_name
 
   tags = {
     Name = "${var.project_name}-bastion"

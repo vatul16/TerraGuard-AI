@@ -39,6 +39,7 @@ jobs:
         working-directory: infra
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_bastion_key_name: ${{ secrets.BASTION_KEY_NAME }}
         run: terraform plan -no-color -out=tfplan
 
       - name: Terraform Apply
@@ -46,4 +47,5 @@ jobs:
         working-directory: infra
         env:
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_bastion_key_name: ${{ secrets.BASTION_KEY_NAME }}
         run: terraform apply -auto-approve tfplan

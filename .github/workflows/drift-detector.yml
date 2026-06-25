@@ -1,4 +1,4 @@
-name: TerraGuard AI - Drift Detector
+name: TerraGuard AI — Drift Detector
 
 on:
   # Run every 6 hours
@@ -80,8 +80,8 @@ jobs:
       - name: Summary
         run: |
           echo "## TerraGuard AI Results" >> $GITHUB_STEP_SUMMARY
-           echo "- **Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-           echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-             echo "- **Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
-           fi
+          echo "- **Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "- **Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          fi

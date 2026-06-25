@@ -1,0 +1,86 @@
+name: TerraGuard AI - Drift Detector
+
+on:
+  # Run every 6 hours
+  schedule:
+    - cron: "0 */6 * * *"
+
+  # Allow manual runs from GitHub UI
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual drift check"
+        required: false
+        default: "Manual audit"
+
+# Only one drift check at a time
+concurrency:
+  group: drift-detection
+  cancel-in-progress: false
+
+jobs:
+  detect-drift:
+    name: Detect Infrastructure Drift
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # To create GitHub Issues for low-risk drift
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "detector/requirements.txt"
+
+      - name: Install Python dependencies
+        run: pip install -r detector/requirements.txt
+
+      - name: Run TerraGuard AI Drift Detector
+        id: drift-check
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          # Tell Terraform where the backend config lives
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          cd detector
+          python detect_drift.py
+        continue-on-error: true # Don't fail the workflow if drift is found
+
+      - name: Log drift result
+        run: |
+          EXIT_CODE=${{ steps.drift-check.outputs.exit_code || '0' }}
+          if [ "${{ steps.drift-check.outcome }}" == "success" ]; then
+            echo "✅ No drift detected"
+          else
+            echo "⚠️ Drift detected or error — check previous step logs"
+          fi
+
+      - name: Summary
+        run: |
+          echo "## TerraGuard AI Results" >> $GITHUB_STEP_SUMMARY
+           echo "- **Run Time:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+           echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+             echo "- **Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+           fi

@@ -1,0 +1,151 @@
+name: Deploy App to ECS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE_NAME }}
+  CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
+
+jobs:
+  # ─── Job 1: Build & Push to ECR ─────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-uri: ${{ steps.build-push.outputs.image-uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build-push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          FULL_IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "📦 Building Docker image..."
+          docker build \
+            --file app/Dockerfile \
+            --tag "${FULL_IMAGE_URI}" \
+            --tag "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            app/
+
+          echo "🚀 Pushing to ECR..."
+          docker push "${FULL_IMAGE_URI}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          echo "image-uri=${FULL_IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "✅ Pushed: ${FULL_IMAGE_URI}"
+
+      - name: Build summary
+        run: |
+          echo "## 📦 Docker Build" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image URI** | \`${{ steps.build-push.outputs.image-uri }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ─── Job 2: Deploy to ECS ────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to ECS Fargate
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_SERVICE }} \
+            --query 'taskDefinition' \
+          | jq 'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .placementConstraints,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )' > task-definition.json
+
+      - name: Update image in task definition
+        env:
+          NEW_IMAGE: ${{ needs.build-and-push.outputs.image-uri }}
+        run: |
+          jq --arg IMAGE "$NEW_IMAGE" \
+             --arg CONTAINER "${{ env.CONTAINER_NAME }}" \
+            '(.containerDefinitions[] | select(.name == $CONTAINER) | .image) = $IMAGE' \
+            task-definition.json > task-definition-new.json
+
+          echo "Updated image → $NEW_IMAGE"
+
+      - name: Register new task definition
+        id: register-task-def
+        run: |
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition-new.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task-def-arn=${NEW_ARN}" >> $GITHUB_OUTPUT
+          echo "Registered: $NEW_ARN"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service  ${{ env.ECS_SERVICE }} \
+            --task-definition ${{ steps.register-task-def.outputs.task-def-arn }} \
+            --force-new-deployment
+
+          echo "⏳ Waiting for deployment to stabilize..."
+
+      - name: Wait for stable deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+          echo "✅ Deployment complete!"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 ECS Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ needs.build-and-push.outputs.image-uri }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Task Def** | \`${{ steps.register-task-def.outputs.task-def-arn }}\` |" >> $GITHUB_STEP_SUMMARY

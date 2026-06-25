@@ -133,33 +133,33 @@ def analyze_with_groq(plan_summary: str, changes: dict) -> dict:
     print("🤖 Sending to Groq AI for analysis...")
 
     prompt = f"""You are a Senior Cloud Security Engineer reviewing a Terraform drift report.
-    Drift means someone manually changed AWS infrastructure OUTSIDE of Terraform, which is a security and compliance risk.
+Drift means someone manually changed AWS infrastructure OUTSIDE of Terraform, which is a security and compliance risk.
 
-    DRIFT DETECTED:
-    Resources Modified: {json.dumps(changes.get("resources_changed", []))}
-    Resources Added: {json.dumps(changes.get("resources_added", []))}
-    Resources Destroyed: {json.dumps(changes.get("resources_destroyed", []))}
-    Attributes Changed: {json.dumps(changes.get("attributes_changed", []))}
-    Plan Summary: {plan_summary}
+DRIFT DETECTED:
+Resources Modified: {json.dumps(changes.get("resources_changed", []))}
+Resources Added: {json.dumps(changes.get("resources_added", []))}
+Resources Destroyed: {json.dumps(changes.get("resources_destroyed", []))}
+Attributes Changed: {json.dumps(changes.get("attributes_changed", []))}
+Plan Summary: {plan_summary}
 
-    Respond ONLY with a valid JSON object (no markdown, no explanation outside JSON):
-    {{
-        "risk_level": "CRITICAL|HIGH|MEDIUM|LOW|INFO",
-        "risk_score": 1-10,
-        "category": "Security|Compliance|Configuration|Cost|Unknown",
-        "summary": "One sentence: what changed and why it matters",
-        "impact": "What could go wrong if this drift is not addressed",
-        "action": "REVERT|ADOPT|INVESTIGATE|MONITOR",
-        "remediation": "Exact command or HCL snippet to fix this (terraform import, terraform apply, etc.)",
-        "reasoning": "Why you assigned this risk level"
-    }}
+Respond ONLY with a valid JSON object (no markdown, no explanation outside JSON):
+{{
+  "risk_level": "CRITICAL|HIGH|MEDIUM|LOW|INFO",
+  "risk_score": 1-10,
+  "category": "Security|Compliance|Configuration|Cost|Unknown",
+  "summary": "One sentence: what changed and why it matters",
+  "impact": "What could go wrong if this drift is not addressed",
+  "action": "REVERT|ADOPT|INVESTIGATE|MONITOR",
+  "remediation": "Exact command or HCL snippet to fix this (terraform import, terraform apply, etc.)",
+  "reasoning": "Why you assigned this risk level"
+}}
 
-    Risk Level Guide:
-    - CRITICAL: Security group opened to 0.0.0.0/0, IAM role with * permissions, encryption disabled
-    - HIGH: Public S3 bucket, database made publicly accessible, logging disabled  
-    - MEDIUM: Instance type changed, scaling limits modified, tag removed
-    - LOW: Description updated, non-security tag added
-    - INFO: No meaningful risk (e.g., auto-assigned resource ID changed)"""
+Risk Level Guide:
+- CRITICAL: Security group opened to 0.0.0.0/0, IAM role with * permissions, encryption disabled
+- HIGH: Public S3 bucket, database made publicly accessible, logging disabled  
+- MEDIUM: Instance type changed, scaling limits modified, tag removed
+- LOW: Description updated, non-security tag added
+- INFO: No meaningful risk (e.g., auto-assigned resource ID changed)"""
 
     try:
         response = requests.post(
@@ -203,10 +203,164 @@ def analyze_with_groq(plan_summary: str, changes: dict) -> dict:
         raise
 
 
+# Alerting
+RISK_EMOJI = {
+    "CRITICAL": "🚨",
+    "HIGH": "🔴",
+    "MEDIUM": "🟡",
+    "LOW": "🟢",
+    "INFO": "ℹ️",
+}
+
+
+def send_slack_alert(analysis: dict, changes: dict):
+    """Sends a rich Slack alert for HIGH/CRITICAL drift."""
+    if not SLACK_WEBHOOK_URL:
+        print("⚠️ No Slack webhook configured, skipping Slack alert")
+        return
+
+    risk = analysis.get("risk_level", "UNKNOWN")
+    emoji = RISK_EMOJI.get(risk, "⚠️")
+
+    payload = {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{emoji} TerraGuard AI — {risk} Drift Detected",
+                },
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Risk Score:*\n{analysis.get('risk_score')}/10",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Category:*\n{analysis.get('category')}",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Action Required:*\n`{analysis.get('action')}`",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Resources Affected:*\n{len(changes.get('resources_changed', []))} changed",
+                    },
+                ],
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*AI Analysis:*\n{analysis.get('summary')}",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Impact:*\n{analysis.get('impact')}",
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Remediation:*\n```{analysis.get('remediation')}```",
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Detected at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} | Repo: {GITHUB_REPO}",
+                    }
+                ],
+            },
+        ]
+    }
+
+    response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+    if response.status_code == 200:
+        print("✅ Slack alert sent successfully")
+    else:
+        print(f"❌ Slack alert failed: {response.status_code} {response.text}")
+
+
+def create_github_issue(analysis: dict, changes: dict):
+    """Creates a GitHub Issue for LOW/MEDIUM/INFO drift."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print("⚠️ No GitHub token/repo configured, skipping issue creation")
+        return
+
+    risk = analysis.get("risk_level", "UNKNOWN")
+    title = f"[TerraGuard AI] {risk} Drift: {analysis.get('summary', 'Infrastructure drift detected')}"
+
+    body = f"""## 🔍 TerraGuard AI Drift Report
+
+**Detected:** {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
+
+### Risk Assessment
+| Field | Value |
+|-------|-------|
+| Risk Level | **{risk}** |
+| Risk Score | {analysis.get("risk_score")}/10 |
+| Category | {analysis.get("category")} |
+| Recommended Action | `{analysis.get("action")}` |
+
+### Summary
+{analysis.get("summary")}
+
+### Impact
+{analysis.get("impact")}
+
+### Resources Affected
+- **Modified:** {", ".join(changes.get("resources_changed", ["none"])) or "none"}
+- **Added:** {", ".join(changes.get("resources_added", ["none"])) or "none"}
+- **Destroyed:** {", ".join(changes.get("resources_destroyed", ["none"])) or "none"}
+
+### AI Remediation Advice
+```bash
+{analysis.get("remediation")}
+```
+
+### AI Reasoning
+{analysis.get("reasoning")}
+
+---
+*Generated by [TerraGuard AI](https://github.com/{GITHUB_REPO}) using Llama 3.3 via Groq*
+"""
+
+    response = requests.post(
+        f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+        },
+        json={
+            "title": title,
+            "body": body,
+            "labels": ["drift-detected", f"risk-{risk.lower()}"],
+        },
+        timeout=15,
+    )
+
+    if response.status_code == 201:
+        issue_url = response.json().get("html_url")
+        print(f"✅ GitHub Issue created: {issue_url}")
+    else:
+        print(f"❌ GitHub Issue creation failed: {response.status_code}")
+
+
 # Main Orchestrator
 def main():
     print("=" * 60)
-    print("  TerraGuard AI - Drift Detection Engine")
+    print("  TerraGuard AI — Drift Detection Engine")
     print(f"  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print("=" * 60)
 
@@ -214,15 +368,15 @@ def main():
     exit_code, stdout, stderr = run_terraform_plan()
 
     if exit_code == 0:
-        print("✅ No drift detected. Infrastructure matches the Terraform state.")
+        print("✅ No drift detected. Infrastructure matches Terraform state.")
         sys.exit(0)
 
     if exit_code == 1:
-        print("❌ Terraform plan errored:\n{stderr}")
+        print(f"❌ Terraform plan errored:\n{stderr}")
         sys.exit(1)
 
     # exit_code == 2: DRIFT DETECTED
-    print("\n⚠️ DRIFT DETECTED! Analyzing with AI...\n")
+    print(f"\n⚠️  DRIFT DETECTED! Analyzing with AI...\n")
 
     # Step 2: Parse the plan output
     changes = parse_plan_output(stdout, stderr)
@@ -230,16 +384,33 @@ def main():
     print(f"   Attributes changed: {changes['attributes_changed']}")
 
     # Step 3: AI Analysis via Groq
-    plan_text = stdout[-3000:] if len(stdout) > 3000 else stdout  # Limit content size
+    plan_text = stdout[-3000:] if len(stdout) > 3000 else stdout  # Limit context size
     analysis = analyze_with_groq(plan_text, changes)
 
-    print("\n📊 AI Risk Assessment:")
+    print(f"\n📊 AI Risk Assessment:")
     print(f"   Risk Level:  {analysis.get('risk_level')}")
     print(f"   Risk Score:  {analysis.get('risk_score')}/10")
     print(f"   Category:    {analysis.get('category')}")
     print(f"   Summary:     {analysis.get('summary')}")
     print(f"   Action:      {analysis.get('action')}")
     print(f"   Remediation: {analysis.get('remediation')}")
+
+    # Step 4: Route alert based on risk level
+    risk_level = analysis.get("risk_level", "MEDIUM")
+
+    if risk_level in ("CRITICAL", "HIGH"):
+        print(f"\n🚨 {risk_level} risk — sending Slack alert immediately!")
+        send_slack_alert(analysis, changes)
+        create_github_issue(analysis, changes)  # Also create an issue for tracking
+
+    elif risk_level in ("MEDIUM", "LOW", "INFO"):
+        print(f"\n📝 {risk_level} risk — creating GitHub Issue for backlog")
+        create_github_issue(analysis, changes)
+
+    print("\n✅ TerraGuard AI drift detection complete.")
+
+    # Exit with code 2 to signal drift was found (useful for CI/CD checks)
+    sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_bastion_key_name: ${{ secrets.BASTION_KEY_NAME }}
           # Tell Terraform where the backend config lives
           AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
         run: |

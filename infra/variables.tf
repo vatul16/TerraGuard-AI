@@ -23,18 +23,28 @@ variable "db_password" {
 }
 
 variable "app_image" {
-  description = "Docker image for the ECS task"
+  description = "Docker image URI for the ECS task. Left empty on first deploy; CI/CD sets this."
   type        = string
-  default     = "nginx:alpine"
+  default     = ""
 }
 
 variable "app_port" {
   description = "Port the application listens on"
   type        = number
-  default     = 80
+  default     = 3000
 }
 
 variable "bastion_key_name" {
   description = "Name of key pair used for Bastion Host"
+  type        = string
+}
+
+variable "github_org" {
+  description = "Your GitHub username or org name (used in OIDC trust policy)"
+  type        = string
+}
+
+variable "github_repo" {
+  description = "Your GitHub repository name (used in OIDC trust policy)"
   type        = string
 }

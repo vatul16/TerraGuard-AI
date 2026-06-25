@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    container_name: terraguard-app
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=terraguard
+      - DB_USER=terraguard_admin
+      - DB_PASSWORD=SuperSecure123!
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - terraguard-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: terraguard-db
+    environment:
+      - POSTGRES_DB=terraguard
+      - POSTGRES_USER=terraguard_admin
+      - POSTGRES_PASSWORD=SuperSecure123!
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terraguard_admin -d terraguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - terraguard-network
+
+volumes:
+  postgres_data:
+
+networks:
+  terraguard-network:
+    driver: bridge

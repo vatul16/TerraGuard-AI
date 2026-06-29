@@ -562,4 +562,4 @@ This project is licensed under the [MIT License](./LICENSE).
 
 [LinkedIn](https://linkedin.com/in/vatul16) · [GitHub](https://github.com/vatul16) · [dev.to](https://dev.to/vatul16)
 
-If you're interested in the design decisions behind this architecture — why ECS Fargate over EC2 ASGs, how Groq was chosen, and what alert fatigue actually looks like at scale — the full write-up is on dev.to.
+If you're interested in the design decisions behind this architecture — why ECS Fargate over EC2 ASGs, how Groq was chosen, and what alert fatigue actually looks like at scale — the full write-up is on [dev.to](https://dev.to/vatul16/terraguard-ai-adding-an-ai-brain-to-terraform-drift-detection-design-decisions-trade-offs-and-7dg).

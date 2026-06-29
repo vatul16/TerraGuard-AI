@@ -44,45 +44,7 @@ The infrastructure being monitored is a real-world, production-pattern stack: a 
 
 ## Architecture
 
-```
-                         ┌─────────────────────────────────────────────┐
-                         │                    VPC                      │
-  Internet               │  ┌─────────────┐       ┌─────────────────┐  │
-    ──────────────────► ALB │  Public     │       │  Bastion Host   │  │
-                         │  └──────┬──────┘       └────────┬────────┘  │
-                         │         │ port 80               │ SSH :22   │
-                         │  ┌──────▼──────────────────────────────┐    │
-                         │  │  Private Subnets (ECS Fargate)      │    │
-                         │  │  Node.js API  (port 3000)           │    │
-                         │  └──────────────────┬──────────────────┘    │
-                         │                     │ port 5432             │
-                         │  ┌──────────────────▼──────────────────┐    │
-                         │  │  Isolated Subnet (RDS PostgreSQL)   │    │
-                         │  └─────────────────────────────────────┘    │
-                         └─────────────────────────────────────────────┘
-
-  Drift Detection Pipeline (GitHub Actions — runs every 6 hours + on demand)
-
-  Manual AWS Console Change
-          │
-          ▼
-  GitHub Actions (scheduled cron)
-          │
-          ▼
-  terraform plan -detailed-exitcode
-          │
-     Drift found?
-          │
-          ▼
-  Groq API (Llama 3.3 70B)
-    Risk Classification
-       /          \
-  HIGH/CRITICAL  LOW/MEDIUM
-  Slack Alert    GitHub Issue
-  + GH Issue
-```
-
-> Replace this section with your architecture diagram once exported from draw.io (`assets/architecture.png`).
+![Architecture Diagram](docs/architecture.png)
 
 ---
 

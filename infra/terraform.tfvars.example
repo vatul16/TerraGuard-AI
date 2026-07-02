@@ -1,2 +1,4 @@
 db_password = "strong_db_password"
 bastion_key_name = "key_pair_name"
+github_org = "github_username"
+github_repo = "github_repo_name"
